@@ -8,10 +8,6 @@
 *_files/
 .quarto/
 
-# Data (keep raw out of git unless it's tiny and allowed)
-data/raw/
-data/processed/
-
 # OS
 .DS_Store
 
