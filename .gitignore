@@ -1,4 +1,20 @@
-.Rproj.user
+# R
 .Rhistory
 .RData
-.Ruserdata
+.Rproj.user/
+
+# Quarto / knitting
+*_cache/
+*_files/
+.quarto/
+
+# Data (keep raw out of git unless it's tiny and allowed)
+data/raw/
+data/processed/
+
+# OS
+.DS_Store
+
+# renv
+renv/library/
+renv/staging/
