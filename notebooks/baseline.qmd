@@ -1,0 +1,82 @@
+---
+title: "Baseline"
+format: html
+editor: visual
+---
+
+## Goal
+Establish a baseline performance profile using logistic regression and observe how common evaluation metrics behave before introducing model complexity.
+
+```{r}
+source("../R/config.R")
+library(tidyverse)
+library(rsample)
+library(yardstick)
+library(broom)
+```
+
+```{r}
+train_df <- readRDS("../data/modeling_train.rds")
+test_df  <- readRDS("../data/modeling_test.rds")
+
+glimpse(train_df)
+```
+
+```{r}
+train_df <- train_df %>% mutate(default = factor(default))
+test_df  <- test_df  %>% mutate(default = factor(default))
+
+baseline_model <- glm(
+  default ~ .,
+  data = train_df,
+  family = binomial()
+)
+
+summary(baseline_model)
+```
+
+```{r}
+test_probs <- predict(baseline_model, test_df, type = "response")
+
+baseline_preds <- test_df %>%
+  mutate(
+    .pred = test_probs,
+    .class = if_else(.pred >= 0.5, "1", "0") %>% factor(levels = levels(default))
+  )
+```
+
+```{r}
+metrics_class <- metric_set(
+  accuracy
+)
+
+class_results <- metrics_class(
+  baseline_preds,
+  truth = default,
+  estimate = .class
+)
+
+metrics_prob <- metric_set(
+  roc_auc,
+  pr_auc,
+  mn_log_loss,
+  brier_class
+)
+
+prob_results <- metrics_prob(
+  baseline_preds,
+  default,
+  .pred
+)
+
+baseline_results <- bind_rows(class_results, prob_results)
+baseline_results
+
+```
+
+## Baseline Results
+
+This logistic regression model establishes a reference performance profile. At this stage, most metrics are expected to move together since the model is simple and relatively well-calibrated.
+
+These values will serve as the comparison point for more complex models in the next notebook.
+
