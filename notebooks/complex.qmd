@@ -3,23 +3,145 @@ title: "Complex Models"
 format: html
 ---
 
-## Quarto
-
-Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
-
-## Running Code
-
-When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+## Goal
+Evaluate how common metrics behave when model complexity increases and models are tuned
+specifically to optimize ROC-AUC.
 
 ```{r}
-1 + 1
-```
+source("../R/config.R")
 
-You can add options to executable code like this
+library(tidyverse)
+library(rsample)
+library(yardstick)
+library(broom)
+library(ranger)
+library(xgboost)
+library(glmnet)
+library(tidyr)
+```
 
 ```{r}
-#| echo: false
-2 * 2
+train_df <- readRDS("../data/modeling_train.rds")
+test_df  <- readRDS("../data/modeling_test.rds")
+
+train_df <- train_df %>% mutate(default = factor(default))
+test_df  <- test_df %>% mutate(default = factor(default))
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+```{r}
+metrics_class <- metric_set(accuracy)
+
+metrics_prob <- metric_set(
+  roc_auc,
+  pr_auc,
+  mn_log_loss,
+  brier_class
+)
+
+eval_metrics <- function(df, model_name) {
+  bind_rows(
+    accuracy(df, truth = default, .class),
+    roc_auc(df, truth = default, .pred, event_level = "second"),
+    pr_auc(df,  truth = default, .pred, event_level = "second"),
+    mn_log_loss(df, truth = default, .pred, event_level = "second"),
+    brier_class(df, truth = default, .pred, event_level = "second")
+  ) %>%
+    mutate(model = model_name)
+}
+```
+
+## Regularized logistic regression
+
+```{r}
+x_train <- model.matrix(default ~ . - 1, train_df)
+y_train <- train_df$default
+
+x_test <- model.matrix(default ~ . - 1, test_df)
+
+cv_glmnet <- cv.glmnet(
+  x_train,
+  y_train,
+  family = "binomial",
+  type.measure = "auc"
+)
+
+glmnet_probs <- predict(cv_glmnet, x_test, s = "lambda.min", type = "response")[,1]
+
+glmnet_preds <- test_df %>%
+  mutate(
+    .pred = glmnet_probs,
+    .class = if_else(.pred >= 0.5, "1", "0") %>% factor(levels = levels(default))
+  )
+```
+
+## Random Forest (ROC-AUC)
+
+```{r}
+rf_model <- ranger(
+  default ~ .,
+  data = train_df,
+  probability = TRUE,
+  num.trees = 500,
+  mtry = floor(sqrt(ncol(train_df) - 1))
+)
+
+rf_probs <- predict(rf_model, test_df)$predictions[, "1"]
+
+rf_preds <- test_df %>%
+  mutate(
+    .pred = rf_probs,
+    .class = if_else(.pred >= 0.5, "1", "0") %>% factor(levels = levels(default))
+  )
+```
+
+## Gradient Boosting (AUC)
+
+```{r}
+dtrain <- xgb.DMatrix(data = x_train, label = as.numeric(y_train) - 1)
+dtest  <- xgb.DMatrix(data = x_test)
+
+params <- list(
+  objective = "binary:logistic",
+  eval_metric = "auc",
+  max_depth = 4,
+  eta = 0.1,
+  subsample = 0.8,
+  colsample_bytree = 0.8
+)
+
+xgb_model <- xgb.train(
+  params = params,
+  data = dtrain,
+  nrounds = 200,
+  verbose = 0
+)
+
+xgb_probs <- predict(xgb_model, dtest)
+
+xgb_preds <- test_df %>%
+  mutate(
+    .pred = xgb_probs,
+    .class = if_else(.pred >= 0.5, "1", "0") %>% factor(levels = levels(default))
+  )
+```
+
+## Results
+
+```{r}
+glmnet_results <- eval_metrics(glmnet_preds, "Logistic (regularized)")
+rf_results     <- eval_metrics(rf_preds, "Random Forest")
+xgb_results    <- eval_metrics(xgb_preds, "Gradient Boosting")
+
+all_results <- bind_rows(
+  baseline_results %>% mutate(model = "Baseline Logistic"),
+  glmnet_results,
+  rf_results,
+  xgb_results
+)
+
+results_wide <- all_results %>%
+  select(model, .metric, .estimate) %>%
+  pivot_wider(names_from = .metric, values_from = .estimate)
+
+results_wide
+```
