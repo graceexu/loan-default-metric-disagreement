@@ -25,6 +25,9 @@ glimpse(train_df)
 train_df <- train_df %>% mutate(default = factor(default))
 test_df  <- test_df  %>% mutate(default = factor(default))
 
+train_df <- train_df %>%
+  mutate(default = relevel(default, ref = "0"))
+
 baseline_model <- glm(
   default ~ .,
   data = train_df,
@@ -35,42 +38,29 @@ summary(baseline_model)
 ```
 
 ```{r}
-test_probs <- predict(baseline_model, test_df, type = "response")
+test_probs <- predict(baseline_model, newdata = test_df, type = "response")
 
 baseline_preds <- test_df %>%
   mutate(
-    .pred = test_probs,
-    .class = if_else(.pred >= 0.5, "1", "0") %>% factor(levels = levels(default))
+    .pred = as.numeric(test_probs),
+    .class = if_else(.pred >= 0.5, "1", "0") %>%
+    factor(levels = levels(default))
   )
 ```
 
 ```{r}
-metrics_class <- metric_set(
-  accuracy
-)
+ev <- "second"
 
-class_results <- metrics_class(
-  baseline_preds,
-  truth = default,
-  estimate = .class
-)
+baseline_results <- bind_rows(
+  accuracy(baseline_preds, truth = default, estimate = .class),
+  roc_auc(baseline_preds, truth = default, .pred, event_level = ev),
+  pr_auc(baseline_preds, truth = default, .pred, event_level = ev),
+  mn_log_loss(baseline_preds, truth = default, .pred, event_level = ev),
+  brier_class(baseline_preds, truth = default, .pred, event_level = ev)
+) %>%
+  mutate(model = "Baseline Logistic")
 
-metrics_prob <- metric_set(
-  roc_auc,
-  pr_auc,
-  mn_log_loss,
-  brier_class
-)
-
-prob_results <- metrics_prob(
-  baseline_preds,
-  default,
-  .pred
-)
-
-baseline_results <- bind_rows(class_results, prob_results)
 baseline_results
-
 ```
 
 ## Baseline Results

@@ -18,6 +18,7 @@ library(ranger)
 library(xgboost)
 library(glmnet)
 library(tidyr)
+library(ggplot2)
 ```
 
 ```{r}
@@ -144,4 +145,33 @@ results_wide <- all_results %>%
   pivot_wider(names_from = .metric, values_from = .estimate)
 
 results_wide
+```
+
+```{r}
+all_results <- all_results %>%
+  mutate(
+    model = factor(
+      model,
+      levels = c(
+        "Baseline Logistic",
+        "Logistic (regularized)",
+        "Random Forest",
+        "Gradient Boosting"
+      )
+    )
+  )
+
+ggplot(all_results, aes(x = model, y = .estimate, color = .metric, group = .metric)) +
+  geom_line() +
+  geom_point(size = 2) +
+  facet_wrap(~ .metric, scales = "free_y") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  labs(
+    title = "Metric Behavior as Model Complexity Increases",
+    x = "Model (increasing complexity)",
+    y = "Metric Value"
+  )
 ```
