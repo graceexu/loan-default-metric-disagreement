@@ -1,0 +1,160 @@
+---
+title: "Metric Tradeoffs: Ranking vs Calibration"
+format: html
+---
+
+## Goal
+Explain why ROC-AUC / PR-AUC can improve while Brier score and log loss do not.
+
+```{r}
+baseline_preds <- readRDS("../data/baseline_preds.rds")
+glmnet_preds <- readRDS("../data/glmnet_preds.rds")
+rf_preds <- readRDS("../data/rf_preds.rds")
+xgb_preds <- readRDS("../data/xgb_preds.rds")
+metric_disagreement_plot <- readRDS("../figures/metric_disagreement_plot")
+
+baseline_preds <- baseline_preds %>% mutate(default = factor(default, levels = c("0","1")))
+glmnet_preds <- glmnet_preds %>% mutate(default = factor(default, levels = c("0","1")))
+rf_preds <- rf_preds %>% mutate(default = factor(default, levels = c("0","1")))
+xgb_preds <- xgb_preds %>% mutate(default = factor(default, levels = c("0","1")))
+```
+
+```{r}
+preds_long <- bind_rows(
+  baseline_preds %>% mutate(model = "Baseline Logistic"),
+  glmnet_preds   %>% mutate(model = "Logistic (regularized)"),
+  rf_preds       %>% mutate(model = "Random Forest"),
+  xgb_preds      %>% mutate(model = "Gradient Boosting")
+) %>%
+  mutate(default = factor(default, levels = c("0","1")))
+
+calibration_by_class <- function(df, n_bins = 10) {
+  df_long <- df %>%
+    mutate(
+      y1 = as.numeric(default == "1"),
+      y0 = as.numeric(default == "0"),
+      p1 = .pred,
+      p0 = 1 - .pred
+    ) %>%
+    select(model, y1, y0, p1, p0) %>%
+    pivot_longer(
+      cols = c(y1, y0, p1, p0),
+      names_to = c(".value", "class"),
+      names_pattern = "([yp])(\\d)"
+    ) %>%
+    mutate(class = if_else(class == "1", "Default = 1", "Default = 0"))
+
+  df_long %>%
+    mutate(bin = ntile(p, n_bins)) %>%
+    group_by(model, class, bin) %>%
+    summarise(
+      n = n(),
+      pred_mean = mean(p),
+      obs_rate  = mean(y),
+      .groups = "drop"
+    )
+}
+
+cal_class_df <- calibration_by_class(preds_long, n_bins = 10)
+
+ggplot(cal_class_df, aes(x = pred_mean, y = obs_rate, color = model)) +
+  geom_abline(linetype = 2) +
+  geom_line() +
+  geom_point(aes(size = n), alpha = 0.9) +
+  facet_wrap(~ class) +
+  coord_equal(xlim = c(0, 1), ylim = c(0, 1)) +
+  theme_minimal() +
+  labs(
+    title = "Calibration Curves Faceted by Class",
+    x = "Mean predicted probability",
+    y = "Observed frequency",
+    size = "Bin count"
+  )
+
+library(tidyverse)
+
+# preds_long must have: model, default (factor "0","1"), .pred (P(default=1))
+
+cal_long <- preds_long %>%
+  mutate(
+    y1 = as.numeric(default == "1"),
+    y0 = as.numeric(default == "0"),
+    p1 = .pred,
+    p0 = 1 - .pred
+  ) %>%
+  select(model, y1, y0, p1, p0) %>%
+  pivot_longer(
+    cols = c(y1, y0, p1, p0),
+    names_to = c(".value", "class"),
+    names_pattern = "([yp])(\\d)"
+  ) %>%
+  mutate(
+    class = if_else(class == "1", "Default = 1", "Default = 0")
+  )
+
+ggplot(cal_long, aes(x = p, y = y, color = model)) +
+  geom_abline(linetype = 2) +
+  geom_point(alpha = 0.03, size = 0.6) +
+  geom_smooth(method = "loess", se = FALSE, span = 0.8) +
+  facet_wrap(~ class) +
+  coord_equal(xlim = c(0, 1), ylim = c(0, 1)) +
+  theme_minimal() +
+  labs(
+    title = "Calibration Curves (No Bins): Raw Outcomes + LOESS Smooth",
+    x = "Predicted probability",
+    y = "Actual outcome (0/1)"
+  )
+
+```
+
+```{r}
+metric_disagreement_plot
+```
+
+## Foundational Knowledge
+
+1. Ranking metrics: ROC-AUC, PR-AUC
+
+- Is a riskier person ranked above a safer one?
+
+- They do not care about the actual probability values.
+
+- They are insensitive to calibration.
+
+Complex models are good at this because they carve complex decision boundaries and push predictions towards 0 or 1. As complexity increases, ranking metrics tend to improve.
+
+2. Probability quality metrics: Log loss, Brier score
+
+- These care about numerical honesty. If the model says 0.8, the event should happen ~80% of the time Overconfidence and underconfidence are punished
+
+Complex models aren't as good at this because they can become overconfident and push predictions toward 0 or 1, improving separation but hurting calibration. This must be explicitly corrected for in complex models.
+
+3. Threshold metrics: Accuracy, F1
+
+- Imagine you have a dataset where 90% are class 0 and 10% are class 1. Suppose you build the dumbest model in the world that always predicts 0. Your accuracy would be 90%!
+
+- Now imagine you have another model that correctly finds half of the positives but introduces false positives 10% of the time. Your accuracy would be (5 + 81)/100, or 86%. A 4% decrease despite this second model being far more useful for prediction.
+
+## Findings
+
+Accuracy is almost perfectly flat across all models. The dataset is imbalanced, so this matches expectations perfectly.
+
+ROC-AUC slightly improves, with Gradient Boosting best. This tells you that the problem is already almost linearly separable in the feature space; there isn’t a ton of hidden nonlinear structure for complex models to exploit. Boosting is a ranking machine and logistic regression already captures most linear signal.
+
+PR-AUC improves modestly. PR is harder to move and improvements reflect better minority-class focus.
+
+Log loss is also flat, indicating probability quality did not meaningfully improve with complexity, especially since we didn't explicitly correct for this. This also matches expectations perfectly.
+
+For Brier score, Random Forest produced the best calibrated probabilities, while Gradient Boosting produced the worst calibrated probabilities, even though Gradient Boosting had the best ranking metrics. This shows a clear tradeoff: best ranking vs worst calibration.
+
+In conclusion, discrimination ≠ calibration ≠ decision quality, and class imbalance amplifies the difference between them.
+
+If I were to recreate this experiment with balanced data, accuracy would actually become sensitive to model quality. I would probably see bigger accuracy difference between models. Accuracy would also track ROC-AUC more closely.
+
+For PR-AUC, differences between models would shrink.
+
+For Brier score, your model would need to be more calibrated to achieve a good Brier score. Calibration differences would become much more visible.
+
+Metric disagreement would probably shrink a bit.
+
+That's all for now! This was super informational and I had a lot of fun :)

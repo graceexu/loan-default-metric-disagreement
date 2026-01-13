@@ -4,8 +4,8 @@ format: html
 ---
 
 ## Goal
-Evaluate how common metrics behave when model complexity increases and models are tuned
-specifically to optimize ROC-AUC.
+
+Evaluate how common metrics behave when model complexity increases and models are tuned specifically to optimize ROC-AUC.
 
 ```{r}
 source("../R/config.R")
@@ -161,7 +161,7 @@ all_results <- all_results %>%
     )
   )
 
-ggplot(all_results, aes(x = model, y = .estimate, color = .metric, group = .metric)) +
+metric_disagreement_plot <- ggplot(all_results, aes(x = model, y = .estimate, color = .metric, group = .metric)) +
   geom_line() +
   geom_point(size = 2) +
   facet_wrap(~ .metric, scales = "free_y") +
@@ -174,4 +174,11 @@ ggplot(all_results, aes(x = model, y = .estimate, color = .metric, group = .metr
     x = "Model (increasing complexity)",
     y = "Metric Value"
   )
+
+saveRDS(metric_disagreement_plot, "../figures/metric_disagreement_plot")
+saveRDS(glmnet_preds,             "../data/glmnet_preds.rds")
+saveRDS(rf_preds,                 "../data/rf_preds.rds")
+saveRDS(xgb_preds,                "../data/xgb_preds.rds")
 ```
+
+More complex models improve ranking metrics (ROC-AUC, PR-AUC), but probability calibration did not consistently improve. In fact, the model with the strongest ranking performance, gradient boosting, produced worse calibrated probabilities, as reflected by a higher Brier score. This demonstrates that optimizing for discrimination can conflict with probability quality.

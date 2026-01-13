@@ -61,6 +61,8 @@ baseline_results <- bind_rows(
   mutate(model = "Baseline Logistic")
 
 baseline_results
+
+saveRDS(baseline_preds, "../data/baseline_preds.rds")
 ```
 
 ## Baseline Results
